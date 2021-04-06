@@ -11,9 +11,12 @@
 #define STRIP_PIN 7
 #define LED_COUNT 28
 
-#define CURRENT_PIN_CC  A2
-#define CURRENT_PIN_BATT A0
+#define TEMP_PIN A8
+
+#define CURRENT_PIN_CC  A5
+#define CURRENT_PIN_BATT A7
 #define VOLTAGE_PIN_BATT A3
+#define VOLTAGE_PIN_CC A1
 
 
 Adafruit_7segment segment1 = Adafruit_7segment();
@@ -35,8 +38,9 @@ struct sensor charge;
 struct sensor battery;
 
 int displayValue = 432;
+float temp;
 
-const float FACTOR = 40.0/1000;
+const float FACTOR = 40.0/1000; // current sensor sensitivity is 40mV/A
 const float QOV = 0.5*5.0;
 
 void setup() {
@@ -63,9 +67,11 @@ void setup() {
 
 
   lcd1.setCursor(0,0);
-  lcd1.print("battery voltage:");
+  lcd1.print("batt voltage:");
+  lcd1.setCursor(0,1);
+  lcd1.print("batt current:");
   lcd1.setCursor(0,2);
-  lcd1.print("battery current:");
+  lcd1.print("Box Temp:");
 
   lcd2.setCursor(0,0);
   lcd2.print("CC voltage:");
@@ -77,47 +83,43 @@ void setup() {
   strip.show();            // Turn OFF all pixels ASAP
   strip.setBrightness(50); // Set BRIGHTNESS to about 1/5 (max = 255)
 
-
 }
 
 void loop() {
-// put your main code here, to run repeatedly:
-//  sensor1.current = analogRead(A0);
-//  sensor1.voltage = analogRead(A1);
-//  sensor1.current = MyMap(sensor1.current, 0, 1023, 0, 50); //0-50 range for 50-amp sensor
-//  sensor1.voltage = MyMap(sensor1.voltage, 0, 1023, 0, 12); 
-//  computePower(sensor1);
 
-  battery.voltage = readVoltage(VOLTAGE_PIN_BATT,16);
-  battery.voltage -= 0.4; //manual compensation for incorrect resistor
+  battery.voltage = readVoltage(VOLTAGE_PIN_BATT,23.261);
+  battery.voltage = 1.1833*battery.voltage+0.1535; //linear offset for voltage sensor
   battery.current = readCurrent(CURRENT_PIN_BATT);
   battery.power = computePower(battery);
-
-  segment1.printFloat(battery.voltage,3);
-  segment2.printFloat(battery.current,3);
-  segment3.printFloat(battery.power,3);
-  segment1.writeDisplay();
-  segment2.writeDisplay();
-  segment3.writeDisplay();
   
+  charge.voltage = readVoltage(VOLTAGE_PIN_CC,25);
   charge.current = readCurrent(CURRENT_PIN_CC);
-//  segment2.printFloat(charge.current, 3);
-//  segment2.writeDisplay();
+  charge.power = computePower(charge);
+
+  temp = readTemp(TEMP_PIN);
+  
+  printDisplays(battery);
+
   //Serial.println(charge.current,3);
   lcd2.setCursor(0,1);
-  lcd2.print("---");
+  lcd2.print(charge.voltage);
   lcd2.setCursor(0,3);
   lcd2.print(charge.current);
 
-  lcd1.setCursor(0,1);
+  lcd1.setCursor(15,0);
   lcd1.print(battery.voltage);
-  lcd1.setCursor(0,3);
+  lcd1.setCursor(15,1);
   lcd1.print(battery.current);
+  lcd1.setCursor(15,2);
+  lcd1.print(temp);
+
+  //Serial.println(battery.voltage);
   
   disp_batt_level();
 
  delay(500);
 }
+
 
 float computePower(struct sensor sens)
 {
@@ -140,6 +142,13 @@ float readVoltage(int pin, float maximum)
   
 }
 
+float readTemp(int pin)
+{
+  float raw_voltage = (5.0/1023.0)*analogRead(pin);
+  float temp = (raw_voltage-1.375)/(0.0225);
+  return temp;
+}
+
 //maping function that does not truncate decimal (old map() type casts to interger format, here we use double)
 double MyMap(double x, int in_min, int in_max, int out_min, int out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -147,12 +156,14 @@ double MyMap(double x, int in_min, int in_max, int out_min, int out_max) {
 
 void disp_batt_level()//function to display battery level on the lower left neopixel bar
 {
-  int len = strip.numPixels()/2;
-  int num_lit = map(battery.voltage,0,16,0,len);
+  int len = LED_COUNT/2;
+  float float_num = MyMap(battery.voltage,12,16,0,len);
+  Serial.println(float_num);
+  int num_lit = (int) float_num;
   int R = 255, G = 0, B = 0;
   int interval = 255/len;
   int counter = 0;
-  for(int i = LED_COUNT-1; i > len; i--)
+  for(int i = LED_COUNT-1; i > len-1; i--)
   {
     if(counter < num_lit)
     {
@@ -169,26 +180,12 @@ void disp_batt_level()//function to display battery level on the lower left neop
   strip.show();
 }
 
-// Rainbow cycle along whole strip. Pass delay time (in ms) between frames.
-void rainbow(int wait) {
-  // Hue of first pixel runs 5 complete loops through the color wheel.
-  // Color wheel has a range of 65536 but it's OK if we roll over, so
-  // just count from 0 to 5*65536. Adding 256 to firstPixelHue each time
-  // means we'll make 5*65536/256 = 1280 passes through this outer loop:
-  for(long firstPixelHue = 0; firstPixelHue < 5*65536; firstPixelHue += 256) {
-    for(int i=0; i<strip.numPixels(); i++) { // For each pixel in strip...
-      // Offset pixel hue by an amount to make one full revolution of the
-      // color wheel (range of 65536) along the length of the strip
-      // (strip.numPixels() steps):
-      int pixelHue = firstPixelHue + (i * 65536L / strip.numPixels());
-      // strip.ColorHSV() can take 1 or 3 arguments: a hue (0 to 65535) or
-      // optionally add saturation and value (brightness) (each 0 to 255).
-      // Here we're using just the single-argument hue variant. The result
-      // is passed through strip.gamma32() to provide 'truer' colors
-      // before assigning to each pixel:
-      strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
-    }
-    strip.show(); // Update strip with new contents
-    delay(wait);  // Pause for a moment
-  }
+void printDisplays(sensor x)
+{
+  segment1.printFloat(x.voltage,3);
+  segment2.printFloat(x.current,3);
+  segment3.printFloat(x.power,3);
+  segment1.writeDisplay();
+  segment2.writeDisplay();
+  segment3.writeDisplay();
 }
